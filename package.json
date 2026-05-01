@@ -1,0 +1,35 @@
+{
+  "name": "solana-wallet-tracker",
+  "version": "1.0.0",
+  "description": "Track trades of 500+ Solana wallets with persistence and real-time streaming",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "build": "tsc",
+    "start": "npm run rebuild && npm run build && electron .",
+    "dev": "npm run rebuild && tsc && electron .",
+    "pack": "npm run rebuild && npm run build && electron-builder",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
+  },
+  "keywords": [
+    "solana",
+    "wallet-tracker",
+    "pumpfun"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mongodb-js/zstd": "^7.0.0",
+    "better-sqlite3": "^11.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "electron-rebuild": "^3.2.9",
+    "typescript": "^5.7.0"
+  }
+}
