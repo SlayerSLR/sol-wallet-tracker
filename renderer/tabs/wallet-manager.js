@@ -125,8 +125,12 @@ window.WalletManager = {
   },
 
   async _add(addr, label='', tags='') {
-    await window.api.db.addWallet(addr, label, tags);
-    this._setStatus('Wallet added.');
+    const r = await window.api.db.addWallet(addr, label, tags);
+    if (r.ok && r.data) {
+      this._setStatus('Wallet added.');
+    } else {
+      this._setStatus('Already tracked.');
+    }
     await window.api.stream.refresh();
     this._load();
   },
@@ -163,8 +167,10 @@ window.WalletManager = {
     try {
       const r = await window.api.db.importWalletsChunked(items);
       if (r.ok) {
-        console.log('Chunked import complete:', r.data, 'wallets inserted');
-        this._setStatus(`Imported ${r.data} wallets`);
+        const inserted = r.data;
+        const already = items.length - inserted;
+        console.log('Chunked import complete:', inserted, 'inserted,', already, 'already tracked');
+        this._setStatus(`Imported ${inserted} wallets${already > 0 ? ` (${already} already tracked)` : ''}`);
       } else {
         console.error('Chunked import returned error:', r.error);
         this._setStatus(`Import failed: ${r.error || 'unknown error'}`);

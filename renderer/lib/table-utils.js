@@ -35,6 +35,16 @@ window.TableUtils = {
     if (name) return `<span title="${addr}">${this._esc(name)}</span>`;
     return `<span title="${addr}">${trunc}</span>`;
   },
+  tokenLabel(mint) {
+    if (!mint) return '';
+    const tok = (window._tokenNames && window._tokenNames[mint]) || null;
+    const trunc = this.shortAddr(mint, 8);
+    if (tok) {
+      const tag = tok.symbol ? `[${this._esc(tok.symbol)}] ` : '';
+      return `<span style="color:#00d4aa;font-size:12px">${tag}${this._esc(tok.name)}</span><br><span class="click-ca" data-mint="${mint}" style="cursor:pointer;color:#999;font-size:10px" title="Click to copy">${trunc}</span>`;
+    }
+    return `<span class="click-ca" data-mint="${mint}" style="cursor:pointer;color:#999;font-size:10px" title="Click to copy">${trunc}</span>`;
+  },
   _esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   },

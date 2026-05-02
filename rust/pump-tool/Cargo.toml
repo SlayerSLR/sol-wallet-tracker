@@ -1,0 +1,11 @@
+[package]
+name = "pump-tool"
+version = "0.1.0"
+edition = "2021"
+description = "Fast ZSTD-decoded JSONL filter for Solana wallet trade data"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+zstd = "0.13"
+serde_json = "1"
+anyhow = "1"

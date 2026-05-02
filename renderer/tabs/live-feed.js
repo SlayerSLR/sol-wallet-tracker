@@ -9,7 +9,7 @@ window.LiveFeed = {
     </div>
     <div style="overflow:auto;max-height:calc(100vh - 120px)">
       <table id="lf-table"><thead><tr>
-        <th>Time</th><th>Type</th><th>Wallet</th><th>Token</th><th>Token Amt</th><th>SOL Amt</th><th>Price (SOL)</th><th>Market Cap</th><th>Pool</th>
+        <th>Time</th><th>Type</th><th>Wallet</th><th>Token</th><th>Token Amt</th><th>SOL Amt</th><th>Price (SOL)</th><th>Market Cap</th><th>Pool</th><th>GMGN</th>
       </tr></thead><tbody></tbody></table>
     </div>
   `; },
@@ -19,12 +19,23 @@ window.LiveFeed = {
     this._paused = false;
     this._trades = [];
     this._filters = {};
+    if (window._refreshTokenNames) window._refreshTokenNames();
     document.getElementById('lf-pause').onclick = () => {
       this._paused = !this._paused;
       document.getElementById('lf-pause').textContent = this._paused ? 'Resume' : 'Pause';
     };
     document.getElementById('lf-wallet-filter').oninput = (e) => { this._filters.wallet = e.target.value.toLowerCase(); this._render(); };
     document.getElementById('lf-token-filter').oninput  = (e) => { this._filters.token = e.target.value.toLowerCase(); this._render(); };
+
+    document.getElementById('lf-table').addEventListener('click', (e) => {
+      const ca = e.target.closest('.click-ca');
+      if (ca) { window.api.clipboard.copy(ca.dataset.mint); return; }
+      const gmgn = e.target.closest('.click-gmgn');
+      if (gmgn) { window.api.openExternal(`https://gmgn.ai/sol/token/${gmgn.dataset.mint}`); return; }
+    });
+    this._tokenRefreshInterval = setInterval(() => {
+      if (window._refreshTokenNames) window._refreshTokenNames();
+    }, 30000);
 
     window.api.events.onTrade((t) => {
       if (this._destroyed || this._paused) return;
@@ -40,6 +51,7 @@ window.LiveFeed = {
   destroy() {
     this._destroyed = true;
     this._trades = [];
+    if (this._tokenRefreshInterval) { clearInterval(this._tokenRefreshInterval); this._tokenRefreshInterval = null; }
   },
 
   _render() {
@@ -59,10 +71,12 @@ window.LiveFeed = {
       const cls = t.txType === 'buy' ? 'buy' : 'sell';
       html += `<tr class="${cls}">
         <td>${U.formatTime(t.timestamp)}</td><td>${t.txType}</td>
-        <td>${U.walletLabel(t.walletAddress)}</td><td>${U.shortAddr(t.mint,10)}</td>
+        <td>${U.walletLabel(t.walletAddress)}</td>
+        <td>${U.tokenLabel(t.mint)}</td>
         <td>${U.formatShortSOL(t.tokenAmount)}</td><td>${U.formatShortSOL(t.solAmount)}</td>
         <td>${(t.price||0).toFixed(8)}</td><td>${U.formatMCAP(t.marketCapSol, p)}</td>
-        <td>${t.pool||''}</td></tr>`;
+        <td>${t.pool||''}</td>
+        <td><button class="btn click-gmgn" data-mint="${t.mint}" style="font-size:10px;padding:2px 6px">GMGN</button></td></tr>`;
     }
     tbody.innerHTML = html;
     document.getElementById('lf-count').textContent = `${filtered.length} trades`;

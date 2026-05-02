@@ -2,6 +2,29 @@ import Database from 'better-sqlite3';
 
 let db: Database.Database | null = null;
 
+// === In-memory dashboard cache ===
+let _totalTrades = 0;
+let _totalWallets = 0;
+let _totalTokens = 0;
+let _latestTradeTs = 0;
+const _knownMints = new Set<string>();
+let _incTraderStmt: Database.Statement | null = null;
+let _incTokenStmt: Database.Statement | null = null;
+
+function _getIncTraderStmt(): Database.Statement {
+  if (!_incTraderStmt) {
+    _incTraderStmt = getDb().prepare(`INSERT INTO trader_vol_cache (wallet_address, trade_count, total_volume_sol) VALUES (?, 1, ?) ON CONFLICT(wallet_address) DO UPDATE SET trade_count = trader_vol_cache.trade_count + 1, total_volume_sol = trader_vol_cache.total_volume_sol + excluded.total_volume_sol`);
+  }
+  return _incTraderStmt;
+}
+
+function _getIncTokenStmt(): Database.Statement {
+  if (!_incTokenStmt) {
+    _incTokenStmt = getDb().prepare(`INSERT INTO token_vol_cache (mint, trade_count, total_volume_sol, sum_market_cap_sol) VALUES (?, 1, ?, ?) ON CONFLICT(mint) DO UPDATE SET trade_count = token_vol_cache.trade_count + 1, total_volume_sol = token_vol_cache.total_volume_sol + excluded.total_volume_sol, sum_market_cap_sol = token_vol_cache.sum_market_cap_sol + excluded.sum_market_cap_sol`);
+  }
+  return _incTokenStmt;
+}
+
 // ====== Types ======
 export interface Wallet { address: string; label: string; tags: string; added_at: string; }
 export interface Trade {
@@ -14,10 +37,10 @@ export interface Trade {
 export interface DashboardStats { totalTrades: number; totalWallets: number; totalTokens: number; latestTradeTs: number; }
 export interface TraderVolume { wallet_address: string; trade_count: number; total_volume_sol: number; }
 export interface TokenVolume { mint: string; trade_count: number; total_volume_sol: number; avg_market_cap: number; }
-export interface OverlapRow { mint: string; wallet_count: number; trade_count: number; buy_volume: number; sell_volume: number; latest_market_cap: number; last_trade: number; trader_list: string; }
+export interface OverlapRow { mint: string; wallet_count: number; trade_count: number; buy_volume: number; sell_volume: number; latest_market_cap: number; last_trade: number; trader_list: string; remaining: number; token_name: string | null; token_symbol: string | null; }
 export interface WalletStats { total_trades: number; buys: number; sells: number; total_buy_volume: number; total_sell_volume: number; unique_tokens: number; avg_buy_price: number | null; avg_sell_price: number | null; last_trade: number | null; first_trade: number | null; }
 export interface TokenStats { total_trades: number; unique_wallets: number; buy_volume: number; sell_volume: number; avg_market_cap: number | null; peak_market_cap: number | null; last_trade: number | null; first_trade: number | null; }
-export interface PnLRow { wallet_address: string; mint: string; total_bought: number; total_sold: number; avg_buy_price: number; avg_sell_price: number; realized_pnl: number; unrealized_pnl: number; current_balance: number; last_trade_at: number; last_updated: number; }
+export interface PnLRow { wallet_address: string; mint: string; total_bought: number; total_sold: number; avg_buy_price: number; avg_sell_price: number; realized_pnl: number; unrealized_pnl: number; current_balance: number; last_trade_at: number; last_updated: number; win_count: number; loss_count: number; }
 export interface BackfillProgress { hour_key: string; status: string; events_total: number; events_matched: number; started_at: string | null; completed_at: string | null; }
 
 // ====== Init ======
@@ -25,15 +48,36 @@ export function initDatabase(dbPath: string): void {
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
-  db.pragma('cache_size = -8000');
+  db.pragma('cache_size = -64000');
   db.pragma('foreign_keys = ON');
   createTables();
   migrateTradesTable();
+  migrateWalletPnlTable();
+  hydrateCaches();
 }
 
 export function getDb(): Database.Database {
   if (!db) throw new Error('Database not initialized');
   return db;
+}
+
+function hydrateCaches(): void {
+  const d = getDb();
+  _totalTrades = (d.prepare('SELECT COUNT(*) as cnt FROM trades').get() as { cnt: number }).cnt;
+  _totalWallets = (d.prepare('SELECT COUNT(*) as cnt FROM wallets').get() as { cnt: number }).cnt;
+  _latestTradeTs = (d.prepare('SELECT MAX(timestamp) as ts FROM trades').get() as { ts: number } | undefined)?.ts ?? 0;
+
+  _knownMints.clear();
+  const mints = d.prepare('SELECT DISTINCT mint FROM trades').all() as { mint: string }[];
+  for (const m of mints) { _knownMints.add(m.mint); }
+  _totalTokens = _knownMints.size;
+
+  d.prepare('DELETE FROM trader_vol_cache').run();
+  d.prepare('DELETE FROM token_vol_cache').run();
+
+  // rebuild aggregate caches from trades table
+  d.prepare(`INSERT INTO trader_vol_cache (wallet_address, trade_count, total_volume_sol) SELECT wallet_address, COUNT(*), SUM(ABS(sol_amount)) FROM trades GROUP BY wallet_address`).run();
+  d.prepare(`INSERT INTO token_vol_cache (mint, trade_count, total_volume_sol, sum_market_cap_sol) SELECT mint, COUNT(*), SUM(ABS(sol_amount)), SUM(COALESCE(market_cap_sol, 0)) FROM trades GROUP BY mint`).run();
 }
 
 function createTables(): void {
@@ -67,6 +111,7 @@ function createTables(): void {
       avg_buy_price REAL DEFAULT 0, avg_sell_price REAL DEFAULT 0,
       realized_pnl REAL DEFAULT 0, unrealized_pnl REAL DEFAULT 0,
       current_balance REAL DEFAULT 0, last_trade_at INTEGER DEFAULT 0, last_updated INTEGER DEFAULT 0,
+      win_count INTEGER DEFAULT 0, loss_count INTEGER DEFAULT 0,
       UNIQUE(wallet_address, mint)
     );
     CREATE INDEX IF NOT EXISTS idx_pnl_wallet ON wallet_pnl(wallet_address);
@@ -74,6 +119,13 @@ function createTables(): void {
       hour_key TEXT PRIMARY KEY, status TEXT DEFAULT 'pending',
       events_total INTEGER DEFAULT 0, events_matched INTEGER DEFAULT 0,
       started_at TEXT, completed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS trader_vol_cache (
+      wallet_address TEXT PRIMARY KEY, trade_count INTEGER DEFAULT 0, total_volume_sol REAL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS token_vol_cache (
+      mint TEXT PRIMARY KEY, trade_count INTEGER DEFAULT 0, total_volume_sol REAL DEFAULT 0,
+      sum_market_cap_sol REAL DEFAULT 0
     );
   `);
 }
@@ -108,13 +160,28 @@ function migrateTradesTable(): void {
   }
 }
 
+function migrateWalletPnlTable(): void {
+  const d = getDb();
+  const row = d.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='wallet_pnl'").get() as { sql: string } | undefined;
+  if (!row) return;
+  const sql = row.sql.replace(/\s+/g, ' ');
+  if (!sql.includes('win_count')) {
+    d.exec("ALTER TABLE wallet_pnl ADD COLUMN win_count INTEGER DEFAULT 0");
+  }
+  if (!sql.includes('loss_count')) {
+    d.exec("ALTER TABLE wallet_pnl ADD COLUMN loss_count INTEGER DEFAULT 0");
+  }
+}
+
 // ====== Wallets ======
 export function addWallet(address: string, label = '', tags = ''): boolean {
-  getDb().prepare('INSERT OR IGNORE INTO wallets (address, label, tags) VALUES (?, ?, ?)').run(address, label, tags);
-  return true;
+  const result = getDb().prepare('INSERT OR IGNORE INTO wallets (address, label, tags) VALUES (?, ?, ?)').run(address, label, tags);
+  if (result.changes > 0) _totalWallets++;
+  return result.changes > 0;
 }
 export function removeWallet(address: string): void {
   getDb().prepare('DELETE FROM wallets WHERE address = ?').run(address);
+  _totalWallets = (getDb().prepare('SELECT COUNT(*) as cnt FROM wallets').get() as { cnt: number }).cnt;
 }
 export function getWallets(): Wallet[] {
   return getDb().prepare('SELECT * FROM wallets ORDER BY added_at DESC').all() as Wallet[];
@@ -138,11 +205,13 @@ export function importWallets(items: (string | [string, string?, string?])[]): n
       } else {
         continue;
       }
-      if (addr) { stmt.run(addr, label, tags); count++; }
+          if (addr && stmt.run(addr, label, tags).changes > 0) { count++; }
     }
     return count;
   });
-  return insertMany(items);
+  const added = insertMany(items);
+  _totalWallets += added;
+  return added;
 }
 export function updateWallet(address: string, label: string, tags: string): void {
   getDb().prepare('UPDATE wallets SET label = ?, tags = ? WHERE address = ?').run(label, tags, address);
@@ -161,7 +230,7 @@ export function importWalletsChunked(
     const stmt = getDb().prepare('INSERT OR IGNORE INTO wallets (address, label, tags) VALUES (?, ?, ?)');
 
     const processBatch = () => {
-      if (offset >= total) { resolve(insertedTotal); return; }
+      if (offset >= total) { _totalWallets += insertedTotal; resolve(insertedTotal); return; }
 
       const chunk = items.slice(offset, offset + BATCH);
       const insertBatch = getDb().transaction((rows: typeof items) => {
@@ -175,7 +244,7 @@ export function importWalletsChunked(
             label = item[1] || '';
             tags = item[2] || '';
           } else continue;
-          if (addr) { stmt.run(addr, label, tags); count++; }
+      if (addr && stmt.run(addr, label, tags).changes > 0) { count++; }
         }
         return count;
       });
@@ -185,7 +254,7 @@ export function importWalletsChunked(
       onProgress(Math.min(offset, total), total, insertedTotal);
 
       if (offset < total) setImmediate(processBatch);
-      else resolve(insertedTotal);
+      else { _totalWallets += insertedTotal; resolve(insertedTotal); }
     };
 
     setImmediate(processBatch);
@@ -195,7 +264,7 @@ export function importWalletsChunked(
 // ====== Trades ======
 export function insertTrade(t: Trade): boolean {
   try {
-    getDb().prepare(`
+    const result = getDb().prepare(`
       INSERT OR IGNORE INTO trades
       (signature, tx_type, wallet_address, mint, token_amount, sol_amount,
        price, market_cap_sol, pool, pool_id, tx_signers,
@@ -206,6 +275,16 @@ export function insertTrade(t: Trade): boolean {
       t.pool ?? null, t.pool_id ?? null, t.tx_signers ?? '',
       t.quote_mint ?? null, t.quote_amount ?? null,
       t.timestamp ?? 0, t.block ?? 0, t.priority_fee ?? null);
+
+    if (result.changes > 0) {
+      _totalTrades++;
+      if (t.timestamp && t.timestamp > _latestTradeTs) _latestTradeTs = t.timestamp;
+      if (!_knownMints.has(t.mint)) { _knownMints.add(t.mint); _totalTokens++; }
+
+      // atomic upsert — ON CONFLICT ensures no double-counting
+      _getIncTraderStmt().run(t.wallet_address, Math.abs(t.sol_amount ?? 0));
+      _getIncTokenStmt().run(t.mint, Math.abs(t.sol_amount ?? 0), t.market_cap_sol ?? 0);
+    }
     return true;
   } catch (e) { console.error('insertTrade failed:', e); return false; }
 }
@@ -237,28 +316,40 @@ export function getTokens(): (TokenVolume & { mint: string; name?: string; symbo
 
 // ====== Dashboard ======
 export function getDashboardStats(): DashboardStats {
-  const d = getDb();
   return {
-    totalTrades: (d.prepare('SELECT COUNT(*) as cnt FROM trades').get() as { cnt: number }).cnt,
-    totalWallets: (d.prepare('SELECT COUNT(*) as cnt FROM wallets').get() as { cnt: number }).cnt,
-    totalTokens: (d.prepare('SELECT COUNT(DISTINCT mint) as cnt FROM trades').get() as { cnt: number }).cnt,
-    latestTradeTs: (d.prepare('SELECT timestamp FROM trades ORDER BY timestamp DESC LIMIT 1').get() as { timestamp: number } | undefined)?.timestamp ?? 0,
+    totalTrades: _totalTrades,
+    totalWallets: _totalWallets,
+    totalTokens: _totalTokens,
+    latestTradeTs: _latestTradeTs,
   };
 }
 export function getTopTradersByVolume(limit = 20): TraderVolume[] {
-  return getDb().prepare(`SELECT wallet_address, COUNT(*) as trade_count, SUM(ABS(sol_amount)) as total_volume_sol FROM trades GROUP BY wallet_address ORDER BY total_volume_sol DESC LIMIT ?`).all(limit) as TraderVolume[];
+  return getDb().prepare('SELECT wallet_address, trade_count, total_volume_sol FROM trader_vol_cache ORDER BY total_volume_sol DESC LIMIT ?').all(limit) as TraderVolume[];
 }
 export function getTopTokensByVolume(limit = 20): TokenVolume[] {
-  return getDb().prepare(`SELECT mint, COUNT(*) as trade_count, SUM(ABS(sol_amount)) as total_volume_sol, AVG(market_cap_sol) as avg_market_cap FROM trades GROUP BY mint ORDER BY trade_count DESC LIMIT ?`).all(limit) as TokenVolume[];
+  return getDb().prepare('SELECT mint, trade_count, total_volume_sol, CASE WHEN trade_count > 0 THEN sum_market_cap_sol / trade_count ELSE 0 END as avg_market_cap FROM token_vol_cache ORDER BY trade_count DESC LIMIT ?').all(limit) as TokenVolume[];
 }
 export function getOverlappingTokens(minWallets = 2): OverlapRow[] {
   return getDb().prepare(`
-    SELECT mint, COUNT(DISTINCT wallet_address) as wallet_count, COUNT(*) as trade_count,
-           SUM(CASE WHEN tx_type='buy' THEN ABS(sol_amount) ELSE 0 END) as buy_volume,
-           SUM(CASE WHEN tx_type='sell' THEN ABS(sol_amount) ELSE 0 END) as sell_volume,
-           MAX(market_cap_sol) as latest_market_cap, MAX(timestamp) as last_trade,
-           GROUP_CONCAT(DISTINCT wallet_address) as trader_list
-    FROM trades GROUP BY mint HAVING wallet_count >= ? ORDER BY wallet_count DESC, trade_count DESC
+    SELECT t.mint, t.wallet_count, t.trade_count, t.buy_volume, t.sell_volume,
+           t.latest_market_cap, t.last_trade, t.trader_list,
+           COALESCE(pnl.remaining, 0) as remaining,
+           tok.name as token_name, tok.symbol as token_symbol
+    FROM (
+      SELECT mint, COUNT(DISTINCT wallet_address) as wallet_count, COUNT(*) as trade_count,
+             SUM(CASE WHEN tx_type='buy' THEN ABS(sol_amount) ELSE 0 END) as buy_volume,
+             SUM(CASE WHEN tx_type='sell' THEN ABS(sol_amount) ELSE 0 END) as sell_volume,
+             MAX(market_cap_sol) as latest_market_cap, MAX(timestamp) as last_trade,
+             GROUP_CONCAT(DISTINCT wallet_address) as trader_list
+      FROM trades GROUP BY mint HAVING wallet_count >= ?
+    ) t
+    LEFT JOIN (
+      SELECT mint, COUNT(*) as remaining
+      FROM wallet_pnl WHERE current_balance > 0
+      GROUP BY mint
+    ) pnl ON t.mint = pnl.mint
+    LEFT JOIN tokens tok ON t.mint = tok.mint
+    ORDER BY t.last_trade DESC
   `).all(minWallets) as OverlapRow[];
 }
 
@@ -302,6 +393,7 @@ function computePnL(walletAddress: string, mint: string): PnLRow | null {
   const lots: { qty: number; pricePerToken: number }[] = [];
   let totalBoughtQty = 0, totalBoughtSol = 0, totalSoldQty = 0, totalSoldSol = 0;
   let realizedPnl = 0;
+  let winCount = 0, lossCount = 0;
   let lastTs = 0;
   let soldOutOfNowhere = 0; // sells of tokens never bought
 
@@ -319,10 +411,13 @@ function computePnL(walletAddress: string, mint: string): PnLRow | null {
       totalSoldSol += sol;
       const sellPricePerToken = qty > 0 ? sol / qty : 0;
       let remaining = qty;
+      let sellPnl = 0;
       while (remaining > 0 && lots.length > 0) {
         const lot = lots[0];
         const consumed = Math.min(lot.qty, remaining);
-        realizedPnl += consumed * (sellPricePerToken - lot.pricePerToken);
+        const tradePnl = consumed * (sellPricePerToken - lot.pricePerToken);
+        sellPnl += tradePnl;
+        realizedPnl += tradePnl;
         lot.qty -= consumed;
         remaining -= consumed;
         if (lot.qty < 1e-12) lots.shift();
@@ -330,6 +425,8 @@ function computePnL(walletAddress: string, mint: string): PnLRow | null {
       if (remaining > 0) {
         soldOutOfNowhere += remaining * sellPricePerToken;
       }
+      if (sellPnl >= 0) winCount++;
+      else lossCount++;
     }
   }
 
@@ -348,18 +445,19 @@ function computePnL(walletAddress: string, mint: string): PnLRow | null {
     realized_pnl: realizedPnl, unrealized_pnl: unrealized,
     current_balance: remainingQty,
     last_trade_at: lastTs, last_updated: Date.now(),
+    win_count: winCount, loss_count: lossCount,
   };
 }
 export function recomputeAllPnL(): void {
   const d = getDb();
   const wallets = d.prepare('SELECT address FROM wallets').all() as { address: string }[];
-  const upsert = d.prepare(`INSERT OR REPLACE INTO wallet_pnl (wallet_address, mint, total_bought, total_sold, avg_buy_price, avg_sell_price, realized_pnl, unrealized_pnl, current_balance, last_trade_at, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const upsert = d.prepare(`INSERT OR REPLACE INTO wallet_pnl (wallet_address, mint, total_bought, total_sold, avg_buy_price, avg_sell_price, realized_pnl, unrealized_pnl, current_balance, last_trade_at, last_updated, win_count, loss_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const txn = d.transaction(() => {
     for (const w of wallets) {
       const pairs = d.prepare('SELECT DISTINCT mint FROM trades WHERE wallet_address = ?').all(w.address) as { mint: string }[];
       for (const p of pairs) {
         const pnl = computePnL(w.address, p.mint);
-        if (pnl) upsert.run(pnl.wallet_address, pnl.mint, pnl.total_bought, pnl.total_sold, pnl.avg_buy_price, pnl.avg_sell_price, pnl.realized_pnl, pnl.unrealized_pnl, pnl.current_balance, pnl.last_trade_at, pnl.last_updated);
+        if (pnl) upsert.run(pnl.wallet_address, pnl.mint, pnl.total_bought, pnl.total_sold, pnl.avg_buy_price, pnl.avg_sell_price, pnl.realized_pnl, pnl.unrealized_pnl, pnl.current_balance, pnl.last_trade_at, pnl.last_updated, pnl.win_count, pnl.loss_count);
       }
     }
   });

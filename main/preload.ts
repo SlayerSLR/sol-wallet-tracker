@@ -44,8 +44,19 @@ contextBridge.exposeInMainWorld('api', {
     pause:  () => ipcRenderer.invoke('backfill:pause'),
     resume: () => ipcRenderer.invoke('backfill:resume'),
     stop:   () => ipcRenderer.invoke('backfill:stop'),
+    processCache: (startDate: string, endDate: string) => ipcRenderer.invoke('backfill:process-cache', startDate, endDate),
+    processCacheAll: () => ipcRenderer.invoke('backfill:process-cache-all'),
+  },
+  cache: {
+    setDir: (dir: string) => ipcRenderer.invoke('cache:set-dir', dir),
+    getDir: () => ipcRenderer.invoke('cache:get-dir'),
+    scan: () => ipcRenderer.invoke('cache:scan'),
   },
   price: {
     get: () => ipcRenderer.invoke('price:get'),
   },
+  clipboard: {
+    copy: (text: string) => ipcRenderer.invoke('clipboard:copy', text),
+  },
+  openExternal: (url: string) => ipcRenderer.invoke('open:external', url),
 });

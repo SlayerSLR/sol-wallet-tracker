@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, shell, clipboard } from 'electron';
 import * as db from './database.js';
 import { StreamWorker } from './stream-worker.js';
 import { BackfillWorker } from './backfill-worker.js';
@@ -63,9 +63,20 @@ export function registerIpcHandlers(
   ipcMain.handle('backfill:pause',  handler(() => { backfillWorker.pause(); }));
   ipcMain.handle('backfill:resume', handler(() => { backfillWorker.resume(); }));
   ipcMain.handle('backfill:stop',   handlerAsync(async () => { await backfillWorker.stop(); }));
+  ipcMain.handle('backfill:process-cache', handlerAsync(async (_e: any, s: string, e: string) => { await backfillWorker.processFromCache(s, e); }));
+  ipcMain.handle('backfill:process-cache-all', handlerAsync(async () => { await backfillWorker.processAllFromCache(); }));
+  ipcMain.handle('cache:set-dir',   handler((_e: any, dir: string) => { backfillWorker.setCacheDir(dir); }));
+  ipcMain.handle('cache:get-dir',   handler(() => backfillWorker.getCacheDir()));
+  ipcMain.handle('cache:scan',      handler(() => backfillWorker.scanCache()));
 
   // === Price ===
   ipcMain.handle('price:get', handler(() => priceService.getPrice()));
+
+  // === Clipboard ===
+  ipcMain.handle('clipboard:copy', handler((_e: any, text: string) => { clipboard.writeText(text); }));
+
+  // === Shell ===
+  ipcMain.handle('open:external', handler((_e: any, url: string) => { shell.openExternal(url); }));
 
   // === Wire workers to push events ===
   streamWorker.onTrade((trade) => mainWindow.webContents.send('event:trade', trade));

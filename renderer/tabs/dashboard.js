@@ -18,12 +18,35 @@ window.Dashboard = {
   `; },
 
   init() {
+    this._destroyed = false;
+    this._lastRefresh = 0;
+    this._pendingTimer = null;
     this._refresh();
-    this._interval = setInterval(() => this._refresh(), 3000);
+
+    this._onTradeHandler = () => {
+      if (this._destroyed) return;
+      const now = Date.now();
+      if (now - this._lastRefresh >= 1000) {
+        this._lastRefresh = now;
+        this._refresh();
+      } else if (!this._pendingTimer) {
+        this._pendingTimer = setTimeout(() => {
+          this._pendingTimer = null;
+          if (!this._destroyed) { this._lastRefresh = Date.now(); this._refresh(); }
+        }, 1000 - (now - this._lastRefresh));
+      }
+    };
+    window.api.events.onTrade(this._onTradeHandler);
+
+    this._fallbackInterval = setInterval(() => {
+      if (!this._destroyed) this._refresh();
+    }, 30000);
   },
 
   destroy() {
-    if (this._interval) { clearInterval(this._interval); this._interval = null; }
+    this._destroyed = true;
+    if (this._fallbackInterval) { clearInterval(this._fallbackInterval); this._fallbackInterval = null; }
+    if (this._pendingTimer) { clearTimeout(this._pendingTimer); this._pendingTimer = null; }
   },
 
   async _refresh() {

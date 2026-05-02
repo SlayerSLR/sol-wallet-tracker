@@ -34,16 +34,32 @@ window.Analytics = {
 
     const U = window.TableUtils; const p = window.solPrice || 0;
     const volMap = {}; for (const t of traders) volMap[t.wallet_address] = t;
-    const tokCount = {}; for (const x of pnl) tokCount[x.wallet_address] = (tokCount[x.wallet_address]||0) + 1;
 
-    const lb = pnl.map(x => {
-      const vi = volMap[x.wallet_address] || {};
+    // Aggregate PnL by wallet
+    const walletMap = {};
+    for (const x of pnl) {
+      const addr = x.wallet_address;
+      if (!walletMap[addr]) {
+        walletMap[addr] = { win_count: 0, loss_count: 0, realized_pnl: 0, token_set: new Set() };
+      }
+      walletMap[addr].win_count += (x.win_count || 0);
+      walletMap[addr].loss_count += (x.loss_count || 0);
+      walletMap[addr].realized_pnl += (x.realized_pnl || 0);
+      walletMap[addr].token_set.add(x.mint);
+    }
+
+    const lb = Object.entries(walletMap).map(([addr, d]) => {
+      const vi = volMap[addr] || {};
+      const totalTrades = d.win_count + d.loss_count;
       return {
-        wallet: x.wallet_address, trades: vi.trade_count||0, tokens: tokCount[x.wallet_address]||0,
-        pnl: x.realized_pnl||0, winRate: (x.total_sold > 0 && (x.realized_pnl||0) > 0) ? 1 : 0,
+        wallet: addr,
+        trades: vi.trade_count || 0,
+        tokens: d.token_set.size,
+        pnl: d.realized_pnl,
+        winRate: totalTrades > 0 ? d.win_count / totalTrades : 0,
         volume: vi.total_volume_sol || 0,
       };
-    }).sort((a,b) => b.pnl - a.pnl);
+    }).sort((a, b) => b.pnl - a.pnl);
 
     let html = '';
     for (const l of lb) {
@@ -57,8 +73,8 @@ window.Analytics = {
     const values = pnl.map(x => x.realized_pnl||0);
     window.EChartUtils.histogram(document.getElementById('a-pnl-dist'), 'PnL Distribution', values);
 
-    const win = pnl.filter(x => (x.realized_pnl||0) > 0).length;
-    const loss = pnl.filter(x => (x.realized_pnl||0) < 0).length;
+    const win = pnl.reduce((s, x) => s + (x.win_count || 0), 0);
+    const loss = pnl.reduce((s, x) => s + (x.loss_count || 0), 0);
     window.EChartUtils.barChart(document.getElementById('a-winloss'), 'Win/Loss Distribution',
       ['Win','Loss'], [win,loss], '#00d4aa');
   },

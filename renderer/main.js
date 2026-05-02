@@ -4,6 +4,7 @@ window._streamConnected = false;
 window._streamWalletCount = 0;
 window._streamTradeCount = 0;
 window._walletNames = {};
+window._tokenNames = {};
 window._refreshWalletNames = async () => {
   const r = await window.api.db.getWallets();
   if (!r.ok) return;
@@ -12,6 +13,15 @@ window._refreshWalletNames = async () => {
     if (w.label) map[w.address] = w.label;
   }
   window._walletNames = map;
+};
+window._refreshTokenNames = async () => {
+  const r = await window.api.db.getTokens();
+  if (!r.ok) return;
+  const map = {};
+  for (const t of r.data) {
+    if (t.name || t.symbol) map[t.mint] = { name: t.name || '', symbol: t.symbol || '' };
+  }
+  window._tokenNames = map;
 };
 
 document.getElementById('tab-nav').addEventListener('click', (e) => {
@@ -60,4 +70,5 @@ window.api.events.onStreamStatus((s) => {
 
 // Initial load
 window._refreshWalletNames();
+window._refreshTokenNames();
 setTimeout(() => switchTab('dashboard'), 100);
