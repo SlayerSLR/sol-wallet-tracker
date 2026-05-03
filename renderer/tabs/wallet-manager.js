@@ -67,20 +67,25 @@ window.WalletManager = {
     document.getElementById('wm-confirm-yes').onclick = () => { this._confirmRemove(); document.getElementById('wm-confirm-dialog').style.display = 'none'; };
     document.getElementById('wm-confirm-no').onclick = () => { this._pendingRemoval = null; document.getElementById('wm-confirm-dialog').style.display = 'none'; };
 
-    window.api.events.onWalletImportProgress((d) => {
+    this._unsubs = [];
+    this._unsubs.push(window.api.events.onWalletImportProgress((d) => {
       document.getElementById('wm-import-fill').style.width = Math.round(d.done / d.total * 100) + '%';
       document.getElementById('wm-import-status').textContent = `${d.done} / ${d.total} processed, ${d.inserted} inserted`;
-    });
+    }));
 
-    document.getElementById('wm-table').addEventListener('focusout', (e) => {
-      const cell = e.target.closest('td[contenteditable]');
-      if (!cell) return;
+    const focusOutHandler = (e) => {
+      const cell = e.target;
+      if (!cell.hasAttribute('contenteditable') || !cell.dataset.addr) return;
+      const row = cell.closest('tr');
+      if (!row) return;
       const addr = cell.dataset.addr;
-      const row = cell.parentElement;
-      const label = row?.querySelector('[data-field="label"]')?.textContent.trim() || '';
-      const tags  = row?.querySelector('[data-field="tags"]')?.textContent.trim() || '';
+      const label = (row.querySelector('[data-field="label"]')?.textContent || '').trim();
+      const tags = (row.querySelector('[data-field="tags"]')?.textContent || '').trim();
       window.api.db.updateWallet(addr, label, tags);
-    });
+      if (window._refreshWalletNames) window._refreshWalletNames();
+    };
+    document.getElementById('wm-table').addEventListener('focusout', focusOutHandler);
+    this._unsubs.push(() => document.getElementById('wm-table').removeEventListener('focusout', focusOutHandler));
   },
 
   _setStatus(msg) { document.getElementById('wm-status').textContent = msg; },
@@ -238,5 +243,9 @@ window.WalletManager = {
     }
     const lines = text.split(/[\n,]+/).map(l => l.trim()).filter(Boolean);
     if (lines.length) this._importItems(lines.map(l => [l]));
+  },
+
+  destroy() {
+    if (this._unsubs) { this._unsubs.forEach(fn => fn()); this._unsubs = null; }
   },
 };

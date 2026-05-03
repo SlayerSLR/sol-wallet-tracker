@@ -90,4 +90,8 @@ window.Tokens = {
     }
     document.querySelector('#t-wallets tbody').innerHTML = html;
   },
+
+  destroy() {
+    try { window.EChartUtils.disposeAll(document.getElementById('t-chart')); } catch {}
+  },
 };

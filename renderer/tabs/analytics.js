@@ -85,5 +85,11 @@ window.Analytics = {
     document.getElementById('a-status').textContent = 'PnL recomputed.';
     this.refresh();
   },
+
+  destroy() {
+    ['a-pnl-dist', 'a-winloss'].forEach(id => {
+      try { window.EChartUtils.disposeAll(document.getElementById(id)); } catch {}
+    });
+  },
 };
 

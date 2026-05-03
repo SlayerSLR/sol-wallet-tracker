@@ -1,10 +1,15 @@
 // ECharts helpers
 window.EChartUtils = {
   create(el, theme) {
+    try { echarts.dispose(el); } catch {}
     return echarts.init(el, theme || {
       backgroundColor: 'transparent',
       textStyle: { color: '#a0a0b0', fontFamily: 'monospace', fontSize: 10 },
     });
+  },
+
+  disposeAll(el) {
+    try { echarts.dispose(el); } catch {}
   },
 
   barChart(el, title, labels, values, color = '#00d4aa') {

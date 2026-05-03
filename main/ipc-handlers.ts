@@ -32,7 +32,7 @@ export function registerIpcHandlers(
   ipcMain.handle('db:trades:recent',   handler((_e: any, limit: number) => db.getRecentTrades(limit)));
   ipcMain.handle('db:traders:top',     handler((_e: any, limit: number) => db.getTopTradersByVolume(limit)));
   ipcMain.handle('db:tokens:top',      handler((_e: any, limit: number) => db.getTopTokensByVolume(limit)));
-  ipcMain.handle('db:tokens:overlap',  handler((_e: any, min: number) => db.getOverlappingTokens(min)));
+  ipcMain.handle('db:tokens:overlap',  handler((_e: any, min: number, limit: number) => db.getOverlappingTokens(min, limit)));
   ipcMain.handle('db:wallet:stats',    handler((_e: any, addr: string) => db.getWalletStats(addr)));
   ipcMain.handle('db:wallet:trades',   handler((_e: any, addr: string, limit: number) => db.getWalletTrades(addr, limit)));
   ipcMain.handle('db:pnl:get',         handler((_e: any, addr: string | null) => db.getWalletPnL(addr ?? undefined)));

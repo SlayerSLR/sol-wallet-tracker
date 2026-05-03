@@ -14,6 +14,6 @@
     "sourceMap": false,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["main/**/*.ts"],
+  "include": ["main/**/*.ts", "server/**/*.ts"],
   "exclude": ["node_modules", "dist", "renderer"]
 }

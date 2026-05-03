@@ -105,6 +105,7 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_trades_mint ON trades(mint, timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_trades_signature ON trades(signature);
+    CREATE INDEX IF NOT EXISTS idx_trades_mint_wallet_cov ON trades(mint, wallet_address, tx_type, token_amount);
     CREATE TABLE IF NOT EXISTS wallet_pnl (
       id INTEGER PRIMARY KEY AUTOINCREMENT, wallet_address TEXT NOT NULL, mint TEXT NOT NULL,
       total_bought REAL DEFAULT 0, total_sold REAL DEFAULT 0,
@@ -154,7 +155,8 @@ function migrateTradesTable(): void {
       CREATE INDEX IF NOT EXISTS idx_trades_wallet ON trades(wallet_address, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_trades_mint ON trades(mint, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_trades_signature ON trades(signature);
+    CREATE INDEX IF NOT EXISTS idx_trades_signature ON trades(signature);
+    CREATE INDEX IF NOT EXISTS idx_trades_mint_wallet_cov ON trades(mint, wallet_address, tx_type, token_amount);
       COMMIT;
     `);
   }
@@ -329,28 +331,37 @@ export function getTopTradersByVolume(limit = 20): TraderVolume[] {
 export function getTopTokensByVolume(limit = 20): TokenVolume[] {
   return getDb().prepare('SELECT mint, trade_count, total_volume_sol, CASE WHEN trade_count > 0 THEN sum_market_cap_sol / trade_count ELSE 0 END as avg_market_cap FROM token_vol_cache ORDER BY trade_count DESC LIMIT ?').all(limit) as TokenVolume[];
 }
-export function getOverlappingTokens(minWallets = 2): OverlapRow[] {
+export function getOverlappingTokens(minWallets = 2, limit = 200): OverlapRow[] {
   return getDb().prepare(`
-    SELECT t.mint, t.wallet_count, t.trade_count, t.buy_volume, t.sell_volume,
-           t.latest_market_cap, t.last_trade, t.trader_list,
-           COALESCE(pnl.remaining, 0) as remaining,
-           tok.name as token_name, tok.symbol as token_symbol
-    FROM (
-      SELECT mint, COUNT(DISTINCT wallet_address) as wallet_count, COUNT(*) as trade_count,
-             SUM(CASE WHEN tx_type='buy' THEN ABS(sol_amount) ELSE 0 END) as buy_volume,
-             SUM(CASE WHEN tx_type='sell' THEN ABS(sol_amount) ELSE 0 END) as sell_volume,
-             MAX(market_cap_sol) as latest_market_cap, MAX(timestamp) as last_trade,
-             GROUP_CONCAT(DISTINCT wallet_address) as trader_list
-      FROM trades GROUP BY mint HAVING wallet_count >= ?
-    ) t
-    LEFT JOIN (
-      SELECT mint, COUNT(*) as remaining
-      FROM wallet_pnl WHERE current_balance > 0
-      GROUP BY mint
-    ) pnl ON t.mint = pnl.mint
-    LEFT JOIN tokens tok ON t.mint = tok.mint
-    ORDER BY t.last_trade DESC
-  `).all(minWallets) as OverlapRow[];
+    WITH per_wallet AS (
+      SELECT mint, wallet_address,
+             COUNT(*) as trade_cnt,
+             SUM(CASE WHEN tx_type='buy' THEN ABS(sol_amount) ELSE 0 END) as buy_sol,
+             SUM(CASE WHEN tx_type='sell' THEN ABS(sol_amount) ELSE 0 END) as sell_sol,
+             MAX(market_cap_sol) as max_mc,
+             MAX(timestamp) as max_ts,
+             SUM(CASE WHEN tx_type='buy' THEN ABS(token_amount) ELSE -ABS(token_amount) END) as token_balance
+      FROM trades
+      GROUP BY mint, wallet_address
+    )
+    SELECT per.mint,
+           COUNT(*) as wallet_count,
+           SUM(per.trade_cnt) as trade_count,
+           SUM(per.buy_sol) as buy_volume,
+           SUM(per.sell_sol) as sell_volume,
+           MAX(per.max_mc) as latest_market_cap,
+           MAX(per.max_ts) as last_trade,
+           GROUP_CONCAT(per.wallet_address) as trader_list,
+           SUM(CASE WHEN per.token_balance > 0 THEN 1 ELSE 0 END) as remaining,
+           tok.name as token_name,
+           tok.symbol as token_symbol
+    FROM per_wallet per
+    LEFT JOIN tokens tok ON per.mint = tok.mint
+    GROUP BY per.mint
+    HAVING COUNT(*) >= ?
+    ORDER BY last_trade DESC
+    LIMIT ?
+  `).all(minWallets, limit) as OverlapRow[];
 }
 
 // ====== Stats ======

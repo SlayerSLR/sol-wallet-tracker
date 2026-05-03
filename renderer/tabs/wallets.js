@@ -66,4 +66,8 @@ window.Wallets = {
     window.EChartUtils.barChart(document.getElementById('w-chart'), 'PnL by Token',
       sorted.map(x => U.shortAddr(x.mint,8)), sorted.map(x => x.realized_pnl||0), '#00d4aa');
   },
+
+  destroy() {
+    try { window.EChartUtils.disposeAll(document.getElementById('w-chart')); } catch {}
+  },
 };

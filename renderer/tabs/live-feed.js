@@ -19,6 +19,8 @@ window.LiveFeed = {
     this._paused = false;
     this._trades = [];
     this._filters = {};
+    this._unsubs = [];
+    this._renderScheduled = false;
     if (window._refreshTokenNames) window._refreshTokenNames();
     document.getElementById('lf-pause').onclick = () => {
       this._paused = !this._paused;
@@ -37,21 +39,41 @@ window.LiveFeed = {
       if (window._refreshTokenNames) window._refreshTokenNames();
     }, 30000);
 
-    window.api.events.onTrade((t) => {
+    // Pre-load recent trades so table isn't empty on first view
+    window.api.db.getRecentTrades(50).then(r => {
+      if (this._destroyed || this._paused || !r.ok || !r.data.length) return;
+      this._trades = r.data.map(t => ({
+        signature: t.signature, txType: t.tx_type, walletAddress: t.wallet_address,
+        mint: t.mint, tokenAmount: t.token_amount ?? 0, solAmount: t.sol_amount ?? 0,
+        price: t.price ?? 0, marketCapSol: t.market_cap_sol ?? 0,
+        pool: t.pool, poolId: t.pool_id, timestamp: t.timestamp ?? 0,
+        block: t.block, priorityFee: t.priority_fee,
+      }));
+      this._render();
+    });
+
+    this._unsubs.push(window.api.events.onTrade((t) => {
       if (this._destroyed || this._paused) return;
       this._trades.unshift(t);
       if (this._trades.length > 500) this._trades = this._trades.slice(0, 500);
-      this._render();
+      if (!this._renderScheduled) {
+        this._renderScheduled = true;
+        requestAnimationFrame(() => {
+          this._renderScheduled = false;
+          if (!this._destroyed) this._render();
+        });
+      }
       if (document.getElementById('lf-autoscroll')?.checked) {
         document.getElementById('lf-table')?.parentElement?.scrollTo(0, 0);
       }
-    });
+    }));
   },
 
   destroy() {
     this._destroyed = true;
     this._trades = [];
     if (this._tokenRefreshInterval) { clearInterval(this._tokenRefreshInterval); this._tokenRefreshInterval = null; }
+    if (this._unsubs) { this._unsubs.forEach(fn => fn()); this._unsubs = null; }
   },
 
   _render() {

@@ -15,6 +15,8 @@ window.TokenOverlap = {
   `; },
 
   init() {
+    this._destroyed = false;
+    this._unsubs = [];
     document.getElementById('to-refresh').onclick = () => this._load();
     document.getElementById('to-table').addEventListener('click', (e) => {
       const token = e.target.closest('.click-token');
@@ -25,14 +27,33 @@ window.TokenOverlap = {
       if (gmgn) { this._openGMGN(gmgn); return; }
     });
     this._load();
-    this._refreshInterval = setInterval(() => this._load(), 2000);
+
+    // Event-driven: refresh on trades, throttled to 5s
+    this._lastLoad = 0;
+    this._unsubs.push(window.api.events.onTrade(() => {
+      if (this._destroyed) return;
+      if (Date.now() - this._lastLoad > 5000) {
+        this._lastLoad = Date.now();
+        this._load();
+      }
+    }));
+
+    // Fallback poll at 60s
+    this._fallbackInterval = setInterval(() => {
+      if (!this._destroyed) this._load();
+    }, 60000);
   },
 
   destroy() {
-    if (this._refreshInterval) { clearInterval(this._refreshInterval); this._refreshInterval = null; }
+    this._destroyed = true;
+    if (this._fallbackInterval) { clearInterval(this._fallbackInterval); this._fallbackInterval = null; }
+    if (this._unsubs) { this._unsubs.forEach(fn => fn()); this._unsubs = null; }
   },
 
   async _load() {
+    if (this._loading) return;
+    this._loading = true;
+    try {
     const min = parseInt(document.getElementById('to-min').value) || 2;
     document.getElementById('to-detail').textContent = `Loading tokens traded by at least ${min} wallet(s)...`;
     const r = await window.api.db.getOverlappingTokens(min);
@@ -65,6 +86,9 @@ window.TokenOverlap = {
     document.querySelector('#to-table tbody').innerHTML = html;
     document.getElementById('to-count').textContent = `${rows.length} tokens`;
     document.getElementById('to-detail').textContent = `Tokens traded by ≥${min} tracked wallets. SOL/USD: $${p.toFixed(2)}`;
+    } finally {
+    this._loading = false;
+    }
   },
 
   _openGMGN(btn) {

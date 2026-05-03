@@ -137,15 +137,16 @@ window.Backfill = {
       document.getElementById('bf-bar').style.width = '0%';
     };
 
-    window.api.events.onBackfillProgress((d) => {
+    this._unsubs = [];
+    this._unsubs.push(window.api.events.onBackfillProgress((d) => {
       document.getElementById('bf-bar').style.width = d.percent + '%';
       const skipped = d.skipped ? ' (skipped)' : '';
       document.getElementById('bf-log').innerHTML += `[${d.currentHour}]${skipped} ${d.matched} matches / ${d.totalEvents} events (${d.completed}/${d.total})<br>`;
       document.getElementById('bf-stats').textContent = `Progress: ${d.completed}/${d.total} hours (${d.percent}%)`;
       const el = document.getElementById('bf-log');
       el.scrollTop = el.scrollHeight;
-    });
-    window.api.events.onBackfillStatus((msg) => {
+    }));
+    this._unsubs.push(window.api.events.onBackfillStatus((msg) => {
       document.getElementById('bf-status').textContent = msg;
       if (msg.toLowerCase().includes('complete')) {
         document.getElementById('bf-start-btn').disabled = false;
@@ -153,6 +154,10 @@ window.Backfill = {
         document.getElementById('bf-cache-all-btn').disabled = false;
         document.getElementById('bf-bar').style.width = '100%';
       }
-    });
+    }));
+  },
+
+  destroy() {
+    if (this._unsubs) { this._unsubs.forEach(fn => fn()); this._unsubs = null; }
   },
 };

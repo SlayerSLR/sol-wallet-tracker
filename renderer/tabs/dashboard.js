@@ -36,7 +36,7 @@ window.Dashboard = {
         }, 1000 - (now - this._lastRefresh));
       }
     };
-    window.api.events.onTrade(this._onTradeHandler);
+    this._unsubTrade = window.api.events.onTrade(this._onTradeHandler);
 
     this._fallbackInterval = setInterval(() => {
       if (!this._destroyed) this._refresh();
@@ -47,6 +47,10 @@ window.Dashboard = {
     this._destroyed = true;
     if (this._fallbackInterval) { clearInterval(this._fallbackInterval); this._fallbackInterval = null; }
     if (this._pendingTimer) { clearTimeout(this._pendingTimer); this._pendingTimer = null; }
+    if (this._unsubTrade) { this._unsubTrade(); this._unsubTrade = null; }
+    ['chart-traders', 'chart-tokens'].forEach(id => {
+      try { window.EChartUtils.disposeAll(document.getElementById(id)); } catch {}
+    });
   },
 
   async _refresh() {
