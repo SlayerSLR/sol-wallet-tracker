@@ -37,7 +37,7 @@ export interface Trade {
 export interface DashboardStats { totalTrades: number; totalWallets: number; totalTokens: number; latestTradeTs: number; }
 export interface TraderVolume { wallet_address: string; trade_count: number; total_volume_sol: number; }
 export interface TokenVolume { mint: string; trade_count: number; total_volume_sol: number; avg_market_cap: number; }
-export interface OverlapRow { mint: string; wallet_count: number; trade_count: number; buy_volume: number; sell_volume: number; latest_market_cap: number; last_trade: number; trader_list: string; remaining: number; token_name: string | null; token_symbol: string | null; }
+export interface OverlapRow { mint: string; wallet_count: number; trade_count: number; buy_volume: number; sell_volume: number; latest_market_cap: number; last_trade: number; trader_list: string; remaining: number; token_name: string | null; token_symbol: string | null; entry_mc_min: number | null; entry_mc_max: number | null; entry_mc_values: string | null; first_entry_min: number | null; first_entry_max: number | null; first_entry_times: string | null; }
 export interface WalletStats { total_trades: number; buys: number; sells: number; total_buy_volume: number; total_sell_volume: number; unique_tokens: number; avg_buy_price: number | null; avg_sell_price: number | null; last_trade: number | null; first_trade: number | null; }
 export interface TokenStats { total_trades: number; unique_wallets: number; buy_volume: number; sell_volume: number; avg_market_cap: number | null; peak_market_cap: number | null; last_trade: number | null; first_trade: number | null; }
 export interface PnLRow { wallet_address: string; mint: string; total_bought: number; total_sold: number; avg_buy_price: number; avg_sell_price: number; realized_pnl: number; unrealized_pnl: number; current_balance: number; last_trade_at: number; last_updated: number; win_count: number; loss_count: number; }
@@ -340,7 +340,9 @@ export function getOverlappingTokens(minWallets = 2, limit = 200): OverlapRow[] 
              SUM(CASE WHEN tx_type='sell' THEN ABS(sol_amount) ELSE 0 END) as sell_sol,
              MAX(market_cap_sol) as max_mc,
              MAX(timestamp) as max_ts,
-             SUM(CASE WHEN tx_type='buy' THEN ABS(token_amount) ELSE -ABS(token_amount) END) as token_balance
+             SUM(CASE WHEN tx_type='buy' THEN ABS(token_amount) ELSE -ABS(token_amount) END) as token_balance,
+             MIN(CASE WHEN tx_type='buy' THEN market_cap_sol END) as entry_mc,
+             MIN(CASE WHEN tx_type='buy' THEN timestamp END) as first_buy_ts
       FROM trades
       GROUP BY mint, wallet_address
     )
@@ -353,6 +355,12 @@ export function getOverlappingTokens(minWallets = 2, limit = 200): OverlapRow[] 
            MAX(per.max_ts) as last_trade,
            GROUP_CONCAT(per.wallet_address) as trader_list,
            SUM(CASE WHEN per.token_balance > 0 THEN 1 ELSE 0 END) as remaining,
+           MIN(per.entry_mc) as entry_mc_min,
+           MAX(per.entry_mc) as entry_mc_max,
+           GROUP_CONCAT(per.entry_mc) as entry_mc_values,
+           MIN(per.first_buy_ts) as first_entry_min,
+           MAX(per.first_buy_ts) as first_entry_max,
+           GROUP_CONCAT(per.first_buy_ts) as first_entry_times,
            tok.name as token_name,
            tok.symbol as token_symbol
     FROM per_wallet per

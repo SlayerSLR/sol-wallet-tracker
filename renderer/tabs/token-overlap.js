@@ -8,7 +8,7 @@ window.TokenOverlap = {
     </div>
     <div style="overflow:auto;max-height:calc(100vh - 120px)">
       <table id="to-table"><thead><tr>
-        <th>Token</th><th>Wallets</th><th>Trades</th><th>Volume</th><th>Remaining</th><th>Market Cap</th><th>Traders</th><th>Last Trade</th><th>GMGN</th>
+        <th>Token</th><th>Wallets</th><th>Trades</th><th>Volume</th><th>Remaining</th><th>Market Cap</th><th>Entry MC</th><th>First Entry</th><th>Traders</th><th>Last Trade</th><th>GMGN</th>
       </tr></thead><tbody></tbody></table>
     </div>
     <div id="to-detail" style="margin-top:6px;font-size:11px;color:#a0a0b0"></div>
@@ -80,6 +80,18 @@ window.TokenOverlap = {
         <td>${U.formatShortSOL(o.buy_volume+o.sell_volume)} SOL (~${U.formatUSD((o.buy_volume+o.sell_volume)*p)})</td>
         <td>${o.remaining || 0}</td>
         <td>${U.formatMCAP(o.latest_market_cap, p)}</td>
+        <td>${(() => {
+          const mcs = (o.entry_mc_values || '').split(',').map(Number).filter(m => m > 0).sort((a, b) => a - b);
+          if (!mcs.length) return '—';
+          const med = mcs[Math.floor(mcs.length / 2)];
+          return `<span title="Median: ${U.formatMCAP(med, p)}">${U.formatMCAP(mcs[0], p)} — ${U.formatMCAP(mcs[mcs.length - 1], p)}</span>`;
+        })()}</td>
+        <td>${(() => {
+          const ts = (o.first_entry_times || '').split(',').map(Number).filter(t => t > 0).sort((a, b) => a - b);
+          if (!ts.length) return '—';
+          const med = ts[Math.floor(ts.length / 2)];
+          return `<span title="Median: ${U.formatShortTime(med)}">${U.formatShortTime(ts[0])} — ${U.formatShortTime(ts[ts.length - 1])}</span>`;
+        })()}</td>
         <td>${short}</td><td>${U.formatShortTime(o.last_trade)}</td>
         <td><button class="btn gmgn-btn" data-mint="${o.mint}" style="font-size:10px;padding:3px 8px">GMGN</button></td></tr>`;
     }

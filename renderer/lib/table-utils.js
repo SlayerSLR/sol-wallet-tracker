@@ -18,7 +18,7 @@ window.TableUtils = {
   },
   formatMCAP(sol, price) {
     const usd = (sol || 0) * (price || 0);
-    return `${this.formatShortSOL(sol)} SOL (~${this.formatUSD(usd)})`;
+    return this.formatUSD(usd);
   },
   formatTime(ts) {
     if (!ts || ts === 0) return '';
